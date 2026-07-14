@@ -150,3 +150,8 @@ pili_release.json
 dist
 
 test*
+!test/
+!test/plugin/
+!test/plugin/pl_player/
+!test/plugin/pl_player/models/
+!test/plugin/pl_player/models/playback_lifecycle_test.dart
