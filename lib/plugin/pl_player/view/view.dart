@@ -43,6 +43,7 @@ import 'package:PiliPlus/plugin/pl_player/models/fullscreen_mode.dart';
 import 'package:PiliPlus/plugin/pl_player/models/gesture_type.dart';
 import 'package:PiliPlus/plugin/pl_player/models/play_status.dart';
 import 'package:PiliPlus/plugin/pl_player/models/playback_lifecycle.dart';
+import 'package:PiliPlus/plugin/pl_player/models/video_decoder_recovery.dart';
 import 'package:PiliPlus/plugin/pl_player/models/video_fit_type.dart';
 import 'package:PiliPlus/plugin/pl_player/widgets/app_bar_ani.dart';
 import 'package:PiliPlus/plugin/pl_player/widgets/backward_seek.dart';
@@ -80,6 +81,7 @@ import 'package:flutter_volume_controller/flutter_volume_controller.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:get/get.dart';
 import 'package:material_design_icons_flutter/material_design_icons_flutter.dart';
+import 'package:media_kit/media_kit.dart' show Player;
 import 'package:media_kit_video/media_kit_video.dart';
 import 'package:screen_brightness_platform_interface/screen_brightness_platform_interface.dart';
 import 'package:window_manager/window_manager.dart';
@@ -150,7 +152,11 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   GestureType? _gestureType;
   Offset? _initialFocalPoint;
 
-  final _playbackLifecycleCoordinator = PlaybackLifecycleCoordinator();
+  final _playbackLifecycleCoordinator = PlaybackLifecycleCoordinator(
+    pauseOnHidden: Platform.isIOS,
+  );
+  final _videoDecoderRecovery = VideoDecoderRecovery();
+  Future<void> _playbackLifecycleOperation = Future.value();
 
   StreamSubscription? _brightnessListener;
   void _onBrightnessChanged(double value) {
@@ -331,17 +337,53 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!plPlayerController.continuePlayInBackground.value) {
-      late final player = plPlayerController.videoPlayerController;
-      switch (_playbackLifecycleCoordinator.transition(
+      final player = plPlayerController.videoPlayerController;
+      final action = _playbackLifecycleCoordinator.transition(
         state,
         isPlaying: player?.state.playing ?? false,
-      )) {
-        case .pause:
-          player?.pause();
-        case .resume:
-          player?.play();
-        case .none:
+      );
+      if (player != null && action != .none) {
+        if (Platform.isIOS && action == .pause) {
+          _videoDecoderRecovery.prepare(
+            currentHwdec: player.getProperty('hwdec-current'),
+            videoTrack: player.state.track.video.id,
+            position: player.state.position,
+          );
+        }
+        _playbackLifecycleOperation = _playbackLifecycleOperation
+            .then((_) => _applyPlaybackLifecycleAction(player, action))
+            .catchError((Object error, StackTrace stackTrace) {
+              if (kDebugMode) {
+                debugPrint(
+                  'Failed to update playback lifecycle: $error\n$stackTrace',
+                );
+              }
+            });
       }
+    }
+  }
+
+  Future<void> _applyPlaybackLifecycleAction(
+    Player player,
+    PlaybackLifecycleAction action,
+  ) async {
+    if (!mounted || plPlayerController.videoPlayerController != player) {
+      _videoDecoderRecovery.reset();
+      return;
+    }
+
+    switch (action) {
+      case .pause:
+        await player.pause();
+      case .resume:
+        try {
+          if (Platform.isIOS) {
+            await _videoDecoderRecovery.recover(runCommand: player.command);
+          }
+        } finally {
+          await player.play();
+        }
+      case .none:
     }
   }
 
@@ -371,6 +413,7 @@ class _PLVideoPlayerState extends State<PLVideoPlayer>
   @override
   void dispose() {
     removeObserverMobile(this);
+    _videoDecoderRecovery.reset();
     _danmakuListener?.cancel();
     _tapGestureRecognizer.dispose();
     _longPressRecognizer?.dispose();

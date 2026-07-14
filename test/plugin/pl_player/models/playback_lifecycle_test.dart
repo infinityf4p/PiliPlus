@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   group('PlaybackLifecycleCoordinator', () {
     test('waits for resumed during an iOS foreground transition', () {
-      final coordinator = PlaybackLifecycleCoordinator();
+      final coordinator = PlaybackLifecycleCoordinator(pauseOnHidden: true);
 
       expect(
         coordinator.transition(.inactive, isPlaying: true),
@@ -13,11 +13,11 @@ void main() {
       );
       expect(
         coordinator.transition(.hidden, isPlaying: true),
-        PlaybackLifecycleAction.none,
+        PlaybackLifecycleAction.pause,
       );
       expect(
         coordinator.transition(.paused, isPlaying: true),
-        PlaybackLifecycleAction.pause,
+        PlaybackLifecycleAction.none,
       );
 
       expect(
@@ -55,7 +55,7 @@ void main() {
     });
 
     test('does not pause for a foreground-only inactive transition', () {
-      final coordinator = PlaybackLifecycleCoordinator();
+      final coordinator = PlaybackLifecycleCoordinator(pauseOnHidden: true);
 
       expect(
         coordinator.transition(.inactive, isPlaying: true),
@@ -64,6 +64,23 @@ void main() {
       expect(
         coordinator.transition(.resumed, isPlaying: true),
         PlaybackLifecycleAction.none,
+      );
+    });
+
+    test('uses paused as the fallback when hidden is not enabled', () {
+      final coordinator = PlaybackLifecycleCoordinator();
+
+      expect(
+        coordinator.transition(.hidden, isPlaying: true),
+        PlaybackLifecycleAction.none,
+      );
+      expect(
+        coordinator.transition(.paused, isPlaying: true),
+        PlaybackLifecycleAction.pause,
+      );
+      expect(
+        coordinator.transition(.resumed, isPlaying: false),
+        PlaybackLifecycleAction.resume,
       );
     });
   });
